@@ -4,7 +4,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from app.rag import add_document, search_documents
 import anthropic
-import httpx
 import os
 import jwt as pyjwt
 
@@ -32,6 +31,51 @@ BLOCKED_DOMAINS = {
     "emailax.pro", "spamgourmet.com", "dispostable.com"
 }
 
+DOC_PROMPTS = {
+    "claim": """أنت محامٍ خبير في صياغة صحائف الدعوى أمام المحاكم السعودية.
+اكتب صحيفة دعوى كاملة تشمل:
+- بيانات المدعي والمدعى عليه
+- الوقائع والأسانيد
+- الطلبات الختامية
+- المستندات المرفقة
+استند للمواد النظامية بأرقامها.""",
+
+    "appeal": """أنت محامٍ خبير في صياغة لوائح الاعتراض على الأحكام القضائية السعودية.
+اكتب لائحة اعتراضية كاملة تشمل:
+- بيانات الحكم المعترض عليه
+- أوجه الاعتراض والأسباب القانونية
+- المطالبة بإلغاء أو تعديل الحكم
+استند للمواد النظامية بأرقامها.""",
+
+    "response": """أنت محامٍ خبير في صياغة المذكرات الجوابية أمام المحاكم السعودية.
+اكتب مذكرة جوابية كاملة تشمل:
+- الرد على ادعاءات المدعي نقطة بنقطة
+- الدفوع الشكلية والموضوعية
+- الطلبات الختامية بالرفض
+استند للمواد النظامية بأرقامها.""",
+
+    "enforcement": """أنت محامٍ خبير في صياغة طلبات التنفيذ أمام محاكم التنفيذ السعودية.
+اكتب طلب تنفيذ كاملاً يشمل:
+- بيانات السند التنفيذي
+- المطلوب تنفيذه وقيمته
+- إجراءات التنفيذ المطلوبة
+استند لنظام التنفيذ السعودي بأرقام المواد.""",
+
+    "supplementary": """أنت محامٍ خبير في صياغة المذكرات التكميلية أمام المحاكم السعودية.
+اكتب مذكرة تكميلية كاملة تشمل:
+- الإشارة للمذكرة السابقة
+- المستجدات والأدلة الإضافية
+- تعزيز الموقف القانوني السابق
+استند للمواد النظامية بأرقامها.""",
+
+    "reconsideration": """أنت محامٍ خبير في صياغة التماسات إعادة النظر أمام المحاكم السعودية.
+اكتب التماس إعادة نظر كاملاً يشمل:
+- بيانات الحكم المطلوب إعادة النظر فيه
+- الأسباب الموجبة لإعادة النظر
+- الأدلة الجديدة أو الأخطاء القانونية
+استند لنظام المرافعات الشرعية بأرقام المواد.""",
+}
+
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:
@@ -46,6 +90,8 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         if domain in BLOCKED_DOMAINS:
             raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
         return payload
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
 
@@ -59,23 +105,24 @@ async def upload_document(title: str, content: str, category: str, user=Depends(
     return result
 
 @app.post("/draft")
-async def draft_clause(request: str, user=Depends(verify_token)):
+async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verify_token)):
     docs = search_documents(request)
     context = "\n\n".join([f"title: {d['title']}\n{d['content']}" for d in docs])
+    system_prompt = DOC_PROMPTS.get(doc_type, DOC_PROMPTS["claim"])
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
+        max_tokens=2000,
         messages=[{
             "role": "user",
-            "content": f"""أنت محامٍ خبير في الصياغة القانونية السعودية.
-بناءً على هذه النماذج القانونية المعتمدة فقط:
+            "content": f"""{system_prompt}
 
+بناءً على هذه النماذج القانونية المعتمدة:
 {context}
 
-اصغ بنداً قانونياً احترافياً لهذا الطلب:
+التفاصيل:
 {request}
 
-اكتب البند فقط بدون أي شرح أو مقدمة."""
+اكتب الوثيقة كاملة بالعربية الفصحى القانونية بدون أي شرح أو مقدمة."""
         }]
     )
     return {
@@ -107,7 +154,7 @@ Translate this legal text from Arabic to English maintaining legal accuracy:
 Write only the translation without any explanation."""
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}]
     )
     return {
