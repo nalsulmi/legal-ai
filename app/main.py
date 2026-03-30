@@ -206,6 +206,7 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
         p.paragraph_format.space_after = Pt(4)
 
         # معالجة النص العريض **text**
+        stripped = "\u202b" + stripped  # RLE mark for RTL
         parts = stripped.split("**")
         for i, part in enumerate(parts):
             if not part:

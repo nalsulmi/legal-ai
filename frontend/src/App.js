@@ -36,6 +36,16 @@ const PLANS = {
   team: { ar: "فريق", en: "Team", mo: 249, yr: 2490, pu: true, lim: { d: 80, t: 150 }, color: "#059669", feat: ["80 صياغة / مستخدم", "150 ترجمة / مستخدم", "لوحة إدارة", "مشاركة القوالب", "3+ مستخدمين", "دعم مخصص"] },
 };
 
+const renderMarkdown = (text) => {
+  return text
+    .replace(/^### (.+)$/gm, '$1')
+    .replace(/^## (.+)$/gm, '$1')
+    .replace(/^# (.+)$/gm, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/^---$/gm, '─────────────────────')
+    .trim();
+};
+
 // ─── Pure utility functions (outside component) ───────────────────────────
 const BLOCKED_DOMAINS = ["mailinator.com","guerrillamail.com","tempmail.com","throwam.com","sharklasers.com","guerrillamailblock.com","grr.la","guerrillamail.info","guerrillamail.biz","guerrillamail.de","guerrillamail.net","guerrillamail.org","spam4.me","trashmail.com","trashmail.me","trashmail.net","dispostable.com","yopmail.com","emailondeck.com","10minutemail.com","10minutemail.net","fakeinbox.com","mailnull.com","spamgourmet.com","spamgourmet.net","spamgourmet.org","emailax.pro","maildrop.cc","discard.email","spamspot.com","spamthisplease.com","spamhereplease.com"];
 
@@ -566,7 +576,7 @@ export default function App() {
               </div>
             </div>
             <div style={{ padding: 18, maxHeight: 460, overflowY: "auto" }}>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: 14, lineHeight: 2, color: d.text, textAlign: "right" }}>{result}</pre>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: 14, lineHeight: 2, color: d.text, textAlign: "right" }}>{renderMarkdown(result)}</pre>
             </div>
             <div style={{ padding: "8px 16px", borderTop: `1px solid ${d.border}`, background: dark ? "rgba(201,168,76,0.06)" : "#fffbeb", fontSize: 11, color: dark ? "#c9a84c" : "#92400e", textAlign: "center" }}>
               ⚠ محتوى استرشادي — يحتاج مراجعة متخصص مرخص
