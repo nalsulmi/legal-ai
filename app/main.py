@@ -6,6 +6,7 @@ from app.rag import add_document, search_documents
 import anthropic
 import httpx
 import os
+import jwt as pyjwt
 
 load_dotenv()
 
@@ -14,7 +15,7 @@ security = HTTPBearer()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://legal-ai-production-2548.up.railway.app"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,24 +34,20 @@ BLOCKED_DOMAINS = {
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
-    async with httpx.AsyncClient() as client_http:
-        res = await client_http.get(
-            f"{SUPABASE_URL}/auth/v1/user",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "apikey": SUPABASE_KEY
-            }
+    try:
+        payload = pyjwt.decode(
+            token,
+            options={"verify_signature": False}
         )
-    if res.status_code != 200:
+        email = payload.get("email", "")
+        if not email:
+            raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
+        domain = email.split("@")[1].lower() if "@" in email else ""
+        if domain in BLOCKED_DOMAINS:
+            raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
+        return payload
+    except Exception:
         raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
-    
-    user = res.json()
-    email = user.get("email", "")
-    domain = email.split("@")[1].lower() if "@" in email else ""
-    if domain in BLOCKED_DOMAINS:
-        raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
-    
-    return user
 
 @app.get("/")
 def home():
