@@ -38,9 +38,10 @@ const PLANS = {
 
 const renderMarkdown = (text) => {
   return text
-    .replace(/^### (.+)$/gm, '$1')
-    .replace(/^## (.+)$/gm, '$1')
-    .replace(/^# (.+)$/gm, '$1')
+    .replace(/^####\s+(.+)$/gm, '$1')
+    .replace(/^###\s+(.+)$/gm, '$1')
+    .replace(/^##\s+(.+)$/gm, '$1')
+    .replace(/^#\s+(.+)$/gm, '$1')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/^---$/gm, '─────────────────────')
     .trim();

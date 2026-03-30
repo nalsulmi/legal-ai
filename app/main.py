@@ -83,6 +83,14 @@ DOC_PROMPTS = {
 استند لنظام المرافعات الشرعية بأرقام المواد.""",
 }
 
+
+def add_rtl_to_paragraph(p):
+    """إضافة RTL كامل على الفقرة"""
+    pPr = p._p.get_or_add_pPr()
+    bidi = OxmlElement('w:bidi')
+    pPr.append(bidi)
+
+
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:
@@ -99,14 +107,17 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     except Exception:
         raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
 
+
 @app.get("/")
 def home():
     return {"status": "Litiga API is running!"}
+
 
 @app.post("/add-document")
 async def upload_document(title: str, content: str, category: str, user=Depends(verify_token)):
     result = add_document(title, content, category)
     return result
+
 
 @app.post("/draft")
 async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verify_token)):
@@ -134,20 +145,33 @@ async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verif
         "based_on": [d['title'] for d in docs]
     }
 
+
 @app.post("/export-word")
 async def export_word(content: str, title: str = "وثيقة قانونية", user=Depends(verify_token)):
     doc = Document()
+
+    # إعداد RTL على مستوى الـ document كاملاً
+    settings = doc.settings.element
+    rPrDefault = OxmlElement('w:rPrDefault')
+    rPr = OxmlElement('w:rPr')
+    rtl_default = OxmlElement('w:rtl')
+    rPr.append(rtl_default)
+    rPrDefault.append(rPr)
+    settings.append(rPrDefault)
 
     section = doc.sections[0]
     section.right_margin = Pt(72)
     section.left_margin = Pt(72)
 
+    # العنوان الرئيسي
     heading = doc.add_heading(title, level=1)
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_rtl_to_paragraph(heading)
     for run in heading.runs:
         run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
         run.font.size = Pt(18)
         run.bold = True
+        run.font.rtl = True
 
     doc.add_paragraph()
 
@@ -167,41 +191,55 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             continue
 
-        if stripped.startswith("# "):
-            text = stripped[2:].strip()
-            h = doc.add_heading(text, level=1)
+        if stripped.startswith("#### "):
+            text = stripped[5:].strip()
+            h = doc.add_heading(text, level=3)
             h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            add_rtl_to_paragraph(h)
             for run in h.runs:
-                run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
-                run.font.size = Pt(15)
-            continue
-
-        if stripped.startswith("## "):
-            text = stripped[3:].strip()
-            h = doc.add_heading(text, level=2)
-            h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            for run in h.runs:
-                run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
-                run.font.size = Pt(13)
+                run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+                run.font.size = Pt(11)
+                run.font.rtl = True
             continue
 
         if stripped.startswith("### "):
             text = stripped[4:].strip()
             h = doc.add_heading(text, level=3)
             h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            add_rtl_to_paragraph(h)
             for run in h.runs:
                 run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
                 run.font.size = Pt(12)
+                run.font.rtl = True
             continue
 
+        if stripped.startswith("## "):
+            text = stripped[3:].strip()
+            h = doc.add_heading(text, level=2)
+            h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            add_rtl_to_paragraph(h)
+            for run in h.runs:
+                run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
+                run.font.size = Pt(13)
+                run.font.rtl = True
+            continue
+
+        if stripped.startswith("# "):
+            text = stripped[2:].strip()
+            h = doc.add_heading(text, level=1)
+            h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            add_rtl_to_paragraph(h)
+            for run in h.runs:
+                run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
+                run.font.size = Pt(15)
+                run.font.rtl = True
+            continue
+
+        # نص عادي
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         p.paragraph_format.space_after = Pt(4)
-
-        # إجبار اتجاه RTL على مستوى الفقرة
-        pPr = p._p.get_or_add_pPr()
-        bidi = OxmlElement('w:bidi')
-        pPr.append(bidi)
+        add_rtl_to_paragraph(p)
 
         parts = stripped.split("**")
         for i, part in enumerate(parts):
@@ -211,7 +249,9 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
             run.bold = (i % 2 == 1)
             run.font.size = Pt(12)
             run.font.color.rgb = RGBColor(0x24, 0x29, 0x2f)
+            run.font.rtl = True
 
+    # تذييل
     doc.add_paragraph()
     footer_p = doc.add_paragraph("⚠ محتوى استرشادي — يحتاج مراجعة متخصص مرخص  •  Litiga Legal AI")
     footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -228,6 +268,7 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename=litiga-document.docx"}
     )
+
 
 @app.post("/translate")
 async def translate_legal(text: str, direction: str = "en_to_ar", user=Depends(verify_token)):
