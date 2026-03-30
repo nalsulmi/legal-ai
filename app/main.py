@@ -1,32 +1,68 @@
-from fastapi import FastAPI
-from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from dotenv import load_dotenv
 from app.rag import add_document, search_documents
 import anthropic
+import httpx
 import os
 
 load_dotenv()
 
 app = FastAPI()
+security = HTTPBearer()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "https://legal-ai-production-2548.up.railway.app"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+BLOCKED_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "tempmail.com", "throwam.com",
+    "sharklasers.com", "trashmail.com", "yopmail.com", "emailondeck.com",
+    "10minutemail.com", "fakeinbox.com", "maildrop.cc", "discard.email",
+    "emailax.pro", "spamgourmet.com", "dispostable.com"
+}
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    async with httpx.AsyncClient() as client_http:
+        res = await client_http.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "apikey": SUPABASE_KEY
+            }
+        )
+    if res.status_code != 200:
+        raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
+    
+    user = res.json()
+    email = user.get("email", "")
+    domain = email.split("@")[1].lower() if "@" in email else ""
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
+    
+    return user
 
 @app.get("/")
 def home():
-    return {"status": "Legal AI is running!"}
+    return {"status": "Litiga API is running!"}
 
 @app.post("/add-document")
-def upload_document(title: str, content: str, category: str):
+async def upload_document(title: str, content: str, category: str, user=Depends(verify_token)):
     result = add_document(title, content, category)
     return result
 
 @app.post("/draft")
-def draft_clause(request: str):
+async def draft_clause(request: str, user=Depends(verify_token)):
     docs = search_documents(request)
     context = "\n\n".join([f"title: {d['title']}\n{d['content']}" for d in docs])
     message = client.messages.create(
@@ -51,7 +87,7 @@ def draft_clause(request: str):
     }
 
 @app.post("/translate")
-def translate_legal(text: str, direction: str = "en_to_ar"):
+async def translate_legal(text: str, direction: str = "en_to_ar", user=Depends(verify_token)):
     docs = search_documents(text)
     terms_context = "\n".join([f"- {d['title']}: {d['content']}" for d in docs])
     if direction == "en_to_ar":
