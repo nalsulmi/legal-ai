@@ -162,8 +162,14 @@ export default function App() {
     setQuotaErr(""); setLoading(true); setResult("");
     const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || docType;
     try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token;
       const req = `نوع الوثيقة: ${docLabel}\n\nالتفاصيل:\n${input}`;
-      const res = await axios.post(`${API}/draft?request=${encodeURIComponent(req)}`);
+      const res = await axios.post(
+        `${API}/draft?request=${encodeURIComponent(req)}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       setResult(res.data.draft);
       incUsage("d");
     } catch { setResult("حدث خطأ في الاتصال بالخادم"); }
@@ -175,7 +181,13 @@ export default function App() {
     if (!canUse("t")) { setQuotaErr("translate"); return; }
     setQuotaErr(""); setLoading(true); setResult("");
     try {
-      const res = await axios.post(`${API}/translate?text=${encodeURIComponent(input)}&direction=${transDir}`);
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token;
+      const res = await axios.post(
+        `${API}/translate?text=${encodeURIComponent(input)}&direction=${transDir}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       setResult(res.data.translation);
       incUsage("t");
     } catch { setResult("حدث خطأ في الاتصال بالخادم"); }
