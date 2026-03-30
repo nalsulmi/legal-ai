@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
@@ -166,7 +167,7 @@ export default function App() {
       const token = s?.access_token;
       const req = `نوع الوثيقة: ${docLabel}\n\nالتفاصيل:\n${input}`;
       const res = await axios.post(
-        `${API}/draft?request=${encodeURIComponent(req)}&doc_type=${docType}`,
+        `${API}/draft?request=${encodeURIComponent(req)}`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -197,6 +198,25 @@ export default function App() {
   const copyResult = () => {
     navigator.clipboard.writeText(result);
     setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+
+  const downloadWord = async () => {
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token;
+      const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
+      const res = await fetch(
+        `${API}/export-word?content=${encodeURIComponent(result)}&title=${encodeURIComponent(docLabel)}`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+      );
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `litiga-${docType}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert("حدث خطأ أثناء تحميل الملف"); }
   };
 
   const passStrength = useMemo(() => !isLogin ? getPasswordStrength(password) : null, [password, isLogin]);
@@ -534,9 +554,16 @@ export default function App() {
           <div style={{ marginTop: 20, border: `1px solid ${d.border}`, borderRadius: 12, overflow: "hidden", background: d.surface, animation: "fadeUp .2s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: `1px solid ${d.border}`, background: d.surface2 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: d.muted }}>المخرج القانوني</span>
-              <button onClick={copyResult} style={{ padding: "4px 12px", border: `1px solid ${d.border}`, borderRadius: 6, background: d.surface, cursor: "pointer", fontSize: 12, color: copied ? "#c9a84c" : d.muted, fontFamily: "inherit", fontWeight: copied ? 700 : 400 }}>
-                {copied ? "✓ تم النسخ" : "نسخ"}
-              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={copyResult} style={{ padding: "4px 12px", border: `1px solid ${d.border}`, borderRadius: 6, background: d.surface, cursor: "pointer", fontSize: 12, color: copied ? "#c9a84c" : d.muted, fontFamily: "inherit", fontWeight: copied ? 700 : 400 }}>
+                  {copied ? "✓ تم النسخ" : "نسخ"}
+                </button>
+                {tab === "draft" && (
+                  <button onClick={downloadWord} style={{ padding: "4px 12px", border: `1px solid ${d.border}`, borderRadius: 6, background: d.navy, cursor: "pointer", fontSize: 12, color: "#fff", fontFamily: "inherit", fontWeight: 600 }}>
+                    ⬇ Word
+                  </button>
+                )}
+              </div>
             </div>
             <div style={{ padding: 18, maxHeight: 460, overflowY: "auto" }}>
               <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: 14, lineHeight: 2, color: d.text, textAlign: "right" }}>{result}</pre>

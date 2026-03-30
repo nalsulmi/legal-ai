@@ -1,11 +1,16 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from app.rag import add_document, search_documents
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 import anthropic
 import os
 import jwt as pyjwt
+import io
 
 load_dotenv()
 
@@ -79,10 +84,7 @@ DOC_PROMPTS = {
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:
-        payload = pyjwt.decode(
-            token,
-            options={"verify_signature": False}
-        )
+        payload = pyjwt.decode(token, options={"verify_signature": False})
         email = payload.get("email", "")
         if not email:
             raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
@@ -129,6 +131,50 @@ async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verif
         "draft": message.content[0].text,
         "based_on": [d['title'] for d in docs]
     }
+
+@app.post("/export-word")
+async def export_word(content: str, title: str = "وثيقة قانونية", user=Depends(verify_token)):
+    doc = Document()
+
+    # اتجاه RTL
+    section = doc.sections[0]
+    section.right_margin = Pt(72)
+    section.left_margin = Pt(72)
+
+    # العنوان
+    heading = doc.add_heading(title, level=1)
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in heading.runs:
+        run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x5f)
+        run.font.size = Pt(16)
+
+    doc.add_paragraph()
+
+    # المحتوى
+    for line in content.split("\n"):
+        p = doc.add_paragraph(line)
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        for run in p.runs:
+            run.font.size = Pt(12)
+
+    # تذييل
+    doc.add_paragraph()
+    footer_p = doc.add_paragraph("⚠ محتوى استرشادي — يحتاج مراجعة متخصص مرخص • Litiga Legal AI")
+    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in footer_p.runs:
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x9c, 0xa3, 0xaf)
+
+    # حفظ في الذاكرة
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=litiga-document.docx"}
+    )
 
 @app.post("/translate")
 async def translate_legal(text: str, direction: str = "en_to_ar", user=Depends(verify_token)):
