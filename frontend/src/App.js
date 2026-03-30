@@ -496,6 +496,36 @@ export default function App() {
                 );
               })}
             </div>
+
+            {/* Usage Tracker */}
+            {(() => {
+              const u = (() => { try { const s = localStorage.getItem("litiga_usage"); return s ? JSON.parse(s) : { d: 0, t: 0 }; } catch { return { d: 0, t: 0 }; } })();
+              const lim = PLANS[plan].lim;
+              return (
+                <div style={{ background: d.surface, border: `1px solid ${d.border}`, borderRadius: 12, padding: 16 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: d.muted, marginBottom: 14, textAlign: "right" }}>الاستخدام هذا الشهر</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                    {[
+                      { label: "الصياغات", used: u.d, total: lim.d, color: "#1e3a5f" },
+                      { label: "الترجمات", used: u.t, total: lim.t, color: "#059669" },
+                    ].map(({ label, used, total, color }) => {
+                      const pct = Math.min(100, Math.round((used / total) * 100));
+                      return (
+                        <div key={label} style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 11, color: d.muted, marginBottom: 4 }}>{label}</div>
+                          <div style={{ font: "800 22px/1 'Outfit'", color }}>
+                            {used}<span style={{ fontSize: 11, color: d.muted }}>/{total}</span>
+                          </div>
+                          <div style={{ background: d.surface2, borderRadius: 3, height: 4, marginTop: 6, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${pct}%`, background: pct >= 90 ? "#ef4444" : color, borderRadius: 3, transition: "width .3s" }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
