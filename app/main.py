@@ -126,7 +126,7 @@ async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verif
     system_prompt = DOC_PROMPTS.get(doc_type, DOC_PROMPTS["claim"])
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=5000,
         messages=[{
             "role": "user",
             "content": f"""{system_prompt}
@@ -294,7 +294,7 @@ Translate this legal text from Arabic to English maintaining legal accuracy:
 Write only the translation without any explanation."""
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=5000,
         messages=[{"role": "user", "content": prompt}]
     )
     return {
