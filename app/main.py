@@ -7,6 +7,8 @@ from app.rag import add_document, search_documents
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 import anthropic
 import os
 import jwt as pyjwt
@@ -136,12 +138,10 @@ async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verif
 async def export_word(content: str, title: str = "وثيقة قانونية", user=Depends(verify_token)):
     doc = Document()
 
-    # إعداد الهوامش
     section = doc.sections[0]
     section.right_margin = Pt(72)
     section.left_margin = Pt(72)
 
-    # العنوان الرئيسي
     heading = doc.add_heading(title, level=1)
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for run in heading.runs:
@@ -151,16 +151,13 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
 
     doc.add_paragraph()
 
-    # معالجة المحتوى سطراً سطراً
     for line in content.split("\n"):
         stripped = line.strip()
 
-        # تجاهل الأسطر الفارغة — نضيف مسافة بسيطة
         if not stripped:
             doc.add_paragraph()
             continue
 
-        # خط فاصل ---
         if stripped in ("---", "─────", "———"):
             p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(4)
@@ -170,7 +167,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             continue
 
-        # عنوان رئيسي # 
         if stripped.startswith("# "):
             text = stripped[2:].strip()
             h = doc.add_heading(text, level=1)
@@ -180,7 +176,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
                 run.font.size = Pt(15)
             continue
 
-        # عنوان ثانوي ##
         if stripped.startswith("## "):
             text = stripped[3:].strip()
             h = doc.add_heading(text, level=2)
@@ -190,7 +185,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
                 run.font.size = Pt(13)
             continue
 
-        # عنوان ثالثي ###
         if stripped.startswith("### "):
             text = stripped[4:].strip()
             h = doc.add_heading(text, level=3)
@@ -200,23 +194,24 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
                 run.font.size = Pt(12)
             continue
 
-        # نص عادي مع معالجة **bold**
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         p.paragraph_format.space_after = Pt(4)
 
-        # معالجة النص العريض **text**
-        stripped = "\u202b" + stripped  # RLE mark for RTL
+        # إجبار اتجاه RTL على مستوى الفقرة
+        pPr = p._p.get_or_add_pPr()
+        bidi = OxmlElement('w:bidi')
+        pPr.append(bidi)
+
         parts = stripped.split("**")
         for i, part in enumerate(parts):
             if not part:
                 continue
             run = p.add_run(part)
-            run.bold = (i % 2 == 1)  # كل جزء فردي بين ** يكون bold
+            run.bold = (i % 2 == 1)
             run.font.size = Pt(12)
             run.font.color.rgb = RGBColor(0x24, 0x29, 0x2f)
 
-    # تذييل
     doc.add_paragraph()
     footer_p = doc.add_paragraph("⚠ محتوى استرشادي — يحتاج مراجعة متخصص مرخص  •  Litiga Legal AI")
     footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -224,7 +219,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
         run.font.size = Pt(9)
         run.font.color.rgb = RGBColor(0x9c, 0xa3, 0xaf)
 
-    # حفظ في الذاكرة
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
