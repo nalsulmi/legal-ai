@@ -30,6 +30,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")  
 
 BLOCKED_DOMAINS = {
     "mailinator.com", "guerrillamail.com", "tempmail.com", "throwam.com",
@@ -93,15 +94,37 @@ def add_rtl_to_paragraph(p):
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
+
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT Secret غير مضبوط في المتغيرات البيئية")
+
     try:
-        payload = pyjwt.decode(token, options={"verify_signature": False})
-        email = payload.get("email", "")
+        # التحقق الحقيقي من التوقيع باستخدام Supabase JWT Secret
+        payload = pyjwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub"]}
+        )
+
+        # Supabase يخزن الإيميل داخل user_metadata أو مباشرة في payload
+        email = payload.get("email", "") or payload.get("user_metadata", {}).get("email", "")
+
         if not email:
             raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
+
         domain = email.split("@")[1].lower() if "@" in email else ""
         if domain in BLOCKED_DOMAINS:
             raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
+
         return payload
+
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
+    except pyjwt.InvalidSignatureError:
+        raise HTTPException(status_code=401, detail="توقيع غير صالح — يرجى تسجيل الدخول مجدداً")
+    except pyjwt.DecodeError:
+        raise HTTPException(status_code=401, detail="Token غير صالح")
     except HTTPException:
         raise
     except Exception:
