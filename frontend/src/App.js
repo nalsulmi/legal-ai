@@ -212,23 +212,26 @@ export default function App() {
   };
 
   const downloadWord = async () => {
-    try {
-      const { data: { session: s } } = await supabase.auth.getSession();
-      const token = s?.access_token;
-      const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
-      const res = await fetch(
-        `${API}/export-word?content=${encodeURIComponent(result)}&title=${encodeURIComponent(docLabel)}`,
-        { method: "POST", headers: { Authorization: `Bearer ${token}` } }
-      );
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `litiga-${docType}.docx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch { alert("حدث خطأ أثناء تحميل الملف"); }
-  };
+  try {
+    const { data: { session: s } } = await supabase.auth.getSession();
+    const token = s?.access_token;
+    const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
+    const res = await axios.post(
+      `${API}/export-word?content=${encodeURIComponent(result)}&title=${encodeURIComponent(docLabel)}`,
+      {},
+      { 
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob'
+      }
+    );
+    const url = URL.createObjectURL(new Blob([res.data]));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `litiga-${docType}.docx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch { alert("حدث خطأ أثناء تحميل الملف"); }
+};
 
   const passStrength = useMemo(() => !isLogin ? getPasswordStrength(password) : null, [password, isLogin]);
 

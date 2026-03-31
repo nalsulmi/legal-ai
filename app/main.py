@@ -9,7 +9,6 @@ from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from jwt.algorithms import ECAlgorithm
 import anthropic
 import os
 import jwt as pyjwt
@@ -18,8 +17,6 @@ import json
 import io
 import time
 import logging
-
-logging.basicConfig(level=logging.WARNING)
 
 load_dotenv()
 
@@ -30,8 +27,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*", "Authorization"],
-    allow_credentials=False,
+    allow_headers=["*"],
 )
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -136,6 +132,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         matching_keys = [k for k in keys if k.get("kid") == kid] if kid else keys
         for jwk_key in matching_keys:
             try:
+                from jwt.algorithms import ECAlgorithm
                 public_key = ECAlgorithm.from_jwk(json.dumps(jwk_key))
                 payload = pyjwt.decode(
                     token,
@@ -147,18 +144,6 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 break
             except pyjwt.ExpiredSignatureError:
                 raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
-            except pyjwt.InvalidAudienceError:
-                try:
-                    public_key = ECAlgorithm.from_jwk(json.dumps(jwk_key))
-                    payload = pyjwt.decode(
-                        token,
-                        public_key,
-                        algorithms=["ES256"],
-                        options={"require": ["exp", "sub"], "verify_aud": False}
-                    )
-                    break
-                except Exception:
-                    continue
             except pyjwt.InvalidSignatureError:
                 continue
             except Exception as e:
@@ -179,16 +164,6 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             )
         except pyjwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
-        except pyjwt.InvalidAudienceError:
-            try:
-                payload = pyjwt.decode(
-                    token,
-                    SUPABASE_JWT_SECRET,
-                    algorithms=["HS256"],
-                    options={"require": ["exp", "sub"], "verify_aud": False}
-                )
-            except Exception:
-                raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
         except pyjwt.InvalidSignatureError:
             raise HTTPException(status_code=401, detail="توقيع غير صالح")
         except pyjwt.DecodeError:
