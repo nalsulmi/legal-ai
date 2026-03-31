@@ -217,8 +217,8 @@ export default function App() {
     const token = s?.access_token;
     const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
     const res = await axios.post(
-      `${API}/export-word?content=${encodeURIComponent(result)}&title=${encodeURIComponent(docLabel)}`,
-      {},
+      `${API}/export-word`,
+      { content: result, title: docLabel },
       { 
         headers: { Authorization: `Bearer ${token}` },
         responseType: 'blob'
