@@ -12,7 +12,10 @@ from docx.oxml import OxmlElement
 import anthropic
 import os
 import jwt as pyjwt
+import httpx
+import json
 import io
+import time
 
 load_dotenv()
 
@@ -30,7 +33,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")  
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 BLOCKED_DOMAINS = {
     "mailinator.com", "guerrillamail.com", "tempmail.com", "throwam.com",
@@ -84,9 +87,27 @@ DOC_PROMPTS = {
 استند لنظام المرافعات الشرعية بأرقام المواد.""",
 }
 
+# ─── JWKS Cache ───────────────────────────────────────────────────────────
+_jwks_cache = None
+_jwks_cache_time = 0
+
+async def get_supabase_jwks():
+    global _jwks_cache, _jwks_cache_time
+    if _jwks_cache and time.time() - _jwks_cache_time < 3600:
+        return _jwks_cache
+    try:
+        jwks_url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        async with httpx.AsyncClient() as client_http:
+            resp = await client_http.get(jwks_url, timeout=5)
+            _jwks_cache = resp.json().get("keys", [])
+            _jwks_cache_time = time.time()
+            return _jwks_cache
+    except Exception:
+        return _jwks_cache or []
+# ──────────────────────────────────────────────────────────────────────────
+
 
 def add_rtl_to_paragraph(p):
-    """إضافة RTL كامل على الفقرة"""
     pPr = p._p.get_or_add_pPr()
     bidi = OxmlElement('w:bidi')
     pPr.append(bidi)
@@ -95,40 +116,65 @@ def add_rtl_to_paragraph(p):
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
 
-    if not SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="JWT Secret غير مضبوط في المتغيرات البيئية")
-
     try:
-        # التحقق الحقيقي من التوقيع باستخدام Supabase JWT Secret
-        payload = pyjwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"require": ["exp", "sub"]}
-        )
-
-        # Supabase يخزن الإيميل داخل user_metadata أو مباشرة في payload
-        email = payload.get("email", "") or payload.get("user_metadata", {}).get("email", "")
-
-        if not email:
-            raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
-
-        domain = email.split("@")[1].lower() if "@" in email else ""
-        if domain in BLOCKED_DOMAINS:
-            raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
-
-        return payload
-
-    except pyjwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
-    except pyjwt.InvalidSignatureError:
-        raise HTTPException(status_code=401, detail="توقيع غير صالح — يرجى تسجيل الدخول مجدداً")
-    except pyjwt.DecodeError:
-        raise HTTPException(status_code=401, detail="Token غير صالح")
-    except HTTPException:
-        raise
+        header = pyjwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
     except Exception:
+        raise HTTPException(status_code=401, detail="Token غير صالح")
+
+    payload = None
+
+    # ─── ES256: Current Key الجديد في Supabase ───
+    if alg == "ES256":
+        keys = await get_supabase_jwks()
+        kid = header.get("kid")
+        matching_keys = [k for k in keys if k.get("kid") == kid] if kid else keys
+        for jwk_key in matching_keys:
+            try:
+                from jwt.algorithms import ECAlgorithm
+                public_key = ECAlgorithm.from_jwk(json.dumps(jwk_key))
+                payload = pyjwt.decode(
+                    token,
+                    public_key,
+                    algorithms=["ES256"],
+                    options={"require": ["exp", "sub"]}
+                )
+                break
+            except pyjwt.ExpiredSignatureError:
+                raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
+            except Exception:
+                continue
+
+    # ─── HS256: Legacy Secret ───
+    else:
+        if not SUPABASE_JWT_SECRET:
+            raise HTTPException(status_code=500, detail="JWT Secret غير مضبوط في المتغيرات البيئية")
+        try:
+            payload = pyjwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                options={"require": ["exp", "sub"]}
+            )
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
+        except pyjwt.InvalidSignatureError:
+            raise HTTPException(status_code=401, detail="توقيع غير صالح")
+        except pyjwt.DecodeError:
+            raise HTTPException(status_code=401, detail="Token غير صالح")
+
+    if payload is None:
         raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
+
+    email = payload.get("email", "") or payload.get("user_metadata", {}).get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="غير مصرح — يرجى تسجيل الدخول")
+
+    domain = email.split("@")[1].lower() if "@" in email else ""
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(status_code=403, detail="نوع البريد الإلكتروني غير مسموح به")
+
+    return payload
 
 
 @app.get("/")
@@ -173,7 +219,6 @@ async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verif
 async def export_word(content: str, title: str = "وثيقة قانونية", user=Depends(verify_token)):
     doc = Document()
 
-    # إعداد RTL على مستوى الـ document كاملاً
     settings = doc.settings.element
     rPrDefault = OxmlElement('w:rPrDefault')
     rPr = OxmlElement('w:rPr')
@@ -186,7 +231,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
     section.right_margin = Pt(72)
     section.left_margin = Pt(72)
 
-    # العنوان الرئيسي
     heading = doc.add_heading(title, level=1)
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
     add_rtl_to_paragraph(heading)
@@ -258,7 +302,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
                 run.font.rtl = True
             continue
 
-        # نص عادي
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         p.paragraph_format.space_after = Pt(4)
@@ -274,7 +317,6 @@ async def export_word(content: str, title: str = "وثيقة قانونية", us
             run.font.color.rgb = RGBColor(0x24, 0x29, 0x2f)
             run.font.rtl = True
 
-    # تذييل
     doc.add_paragraph()
     footer_p = doc.add_paragraph("⚠ محتوى استرشادي — يحتاج مراجعة متخصص مرخص  •  Litiga Legal AI")
     footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
