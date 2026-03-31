@@ -16,6 +16,7 @@ import httpx
 import json
 import io
 import time
+import logging
 
 load_dotenv()
 
@@ -143,7 +144,10 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 break
             except pyjwt.ExpiredSignatureError:
                 raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
+            except pyjwt.InvalidSignatureError:
+                continue
             except Exception as e:
+                logging.warning(f"JWT verification error: {type(e).__name__}: {e}")
                 continue
 
     # ─── HS256: Legacy Secret ───
