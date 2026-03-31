@@ -138,6 +138,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                     token,
                     public_key,
                     algorithms=["ES256"],
+                    audience="authenticated",
                     options={"require": ["exp", "sub"]}
                 )
                 break
@@ -156,6 +157,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 token,
                 SUPABASE_JWT_SECRET,
                 algorithms=["HS256"],
+                audience="authenticated",
                 options={"require": ["exp", "sub"]}
             )
         except pyjwt.ExpiredSignatureError:
