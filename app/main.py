@@ -129,6 +129,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         keys = await get_supabase_jwks()
         kid = header.get("kid")
         matching_keys = [k for k in keys if k.get("kid") == kid] if kid else keys
+        print(f"DEBUG: alg={alg}, kid={kid}, keys_count={len(keys)}, matching={len(matching_keys)}")
         for jwk_key in matching_keys:
             try:
                 from jwt.algorithms import ECAlgorithm
@@ -142,7 +143,8 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 break
             except pyjwt.ExpiredSignatureError:
                 raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة — يرجى تسجيل الدخول مجدداً")
-            except Exception:
+            except Exception as e:
+                print(f"DEBUG ERROR: {e}")
                 continue
 
     # ─── HS256: Legacy Secret ───
