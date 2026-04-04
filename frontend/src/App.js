@@ -182,6 +182,8 @@ export default function App() {
     } catch (err) {
       if (err.response?.status === 429) {
         setQuotaErr("draft");
+      } else if (err.response?.status === 400) {
+        setResult("⚠ " + (err.response?.data?.detail || "يرجى إدخال تفاصيل قضية قانونية واضحة"));
       } else {
         setResult("حدث خطأ في الاتصال بالخادم");
       }
