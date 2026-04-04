@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
@@ -47,7 +46,6 @@ const renderMarkdown = (text) => {
     .trim();
 };
 
-// ─── Pure utility functions (outside component) ───────────────────────────
 const BLOCKED_DOMAINS = ["mailinator.com","guerrillamail.com","tempmail.com","throwam.com","sharklasers.com","guerrillamailblock.com","grr.la","guerrillamail.info","guerrillamail.biz","guerrillamail.de","guerrillamail.net","guerrillamail.org","spam4.me","trashmail.com","trashmail.me","trashmail.net","dispostable.com","yopmail.com","emailondeck.com","10minutemail.com","10minutemail.net","fakeinbox.com","mailnull.com","spamgourmet.com","spamgourmet.net","spamgourmet.org","emailax.pro","maildrop.cc","discard.email","spamspot.com","spamthisplease.com","spamhereplease.com"];
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -88,7 +86,6 @@ const translateAuthError = (msg) => {
   if (msg.includes("Email rate limit")) return "تم تجاوز الحد المسموح، حاول لاحقاً";
   return msg;
 };
-// ──────────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [dark, setDark] = useState(false);
@@ -107,11 +104,29 @@ export default function App() {
   const [billing, setBilling] = useState("monthly");
   const [plan, setPlan] = useState("free");
   const [quotaErr, setQuotaErr] = useState("");
+  const [usage, setUsage] = useState({ drafts_used: 0, translations_used: 0, drafts_limit: 3, translations_limit: 5 });
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
     supabase.auth.onAuthStateChange((_e, s) => setSession(s));
   }, []);
+
+  // جلب الاستخدام من الباكند عند تسجيل الدخول
+  useEffect(() => {
+    if (session) fetchUsage();
+  }, [session]);
+
+  const fetchUsage = async () => {
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token;
+      const res = await axios.get(`${API}/usage`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUsage(res.data);
+      setPlan(res.data.plan || "free");
+    } catch {}
+  };
 
   const d = {
     bg: dark ? "#0d1117" : "#fafafa",
@@ -126,25 +141,6 @@ export default function App() {
     danger: dark ? "#f87171" : "#dc2626",
     dangerBg: dark ? "rgba(248,113,113,0.1)" : "#fef2f2",
   };
-
-  const canUse = (k) => {
-    try {
-      const s = localStorage.getItem("litiga_usage");
-      const u = s ? JSON.parse(s) : { d: 0, t: 0 };
-      return u[k] < PLANS[plan].lim[k];
-    } catch { return true; }
-  };
-
-  const incUsage = (k) => {
-    try {
-      const s = localStorage.getItem("litiga_usage");
-      const u = s ? JSON.parse(s) : { d: 0, t: 0 };
-      u[k] = (u[k] || 0) + 1;
-      localStorage.setItem("litiga_usage", JSON.stringify(u));
-    } catch {}
-  };
-
-
 
   const handleAuth = async () => {
     setAuthErr(""); setLoading(true);
@@ -170,7 +166,6 @@ export default function App() {
 
   const handleDraft = async () => {
     if (!input.trim()) return;
-    if (!canUse("d")) { setQuotaErr("draft"); return; }
     setQuotaErr(""); setLoading(true); setResult("");
     const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || docType;
     try {
@@ -183,14 +178,19 @@ export default function App() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setResult(res.data.draft);
-      incUsage("d");
-    } catch { setResult("حدث خطأ في الاتصال بالخادم"); }
+      await fetchUsage();
+    } catch (err) {
+      if (err.response?.status === 429) {
+        setQuotaErr("draft");
+      } else {
+        setResult("حدث خطأ في الاتصال بالخادم");
+      }
+    }
     setLoading(false);
   };
 
   const handleTranslate = async () => {
     if (!input.trim()) return;
-    if (!canUse("t")) { setQuotaErr("translate"); return; }
     setQuotaErr(""); setLoading(true); setResult("");
     try {
       const { data: { session: s } } = await supabase.auth.getSession();
@@ -201,8 +201,14 @@ export default function App() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setResult(res.data.translation);
-      incUsage("t");
-    } catch { setResult("حدث خطأ في الاتصال بالخادم"); }
+      await fetchUsage();
+    } catch (err) {
+      if (err.response?.status === 429) {
+        setQuotaErr("translate");
+      } else {
+        setResult("حدث خطأ في الاتصال بالخادم");
+      }
+    }
     setLoading(false);
   };
 
@@ -212,31 +218,30 @@ export default function App() {
   };
 
   const downloadWord = async () => {
-  try {
-    const { data: { session: s } } = await supabase.auth.getSession();
-    const token = s?.access_token;
-    const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
-    const res = await axios.post(
-      `${API}/export-word`,
-      { content: result, title: docLabel },
-      { 
-        headers: { Authorization: `Bearer ${token}` },
-        responseType: 'blob'
-      }
-    );
-    const url = URL.createObjectURL(new Blob([res.data]));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `litiga-${docType}.docx`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch { alert("حدث خطأ أثناء تحميل الملف"); }
-};
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token;
+      const docLabel = DOC_TYPES.find(x => x.id === docType)?.label || "وثيقة قانونية";
+      const res = await axios.post(
+        `${API}/export-word`,
+        { content: result, title: docLabel },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `litiga-${docType}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert("حدث خطأ أثناء تحميل الملف"); }
+  };
 
   const passStrength = useMemo(() => !isLogin ? getPasswordStrength(password) : null, [password, isLogin]);
 
   // ─── AUTH SCREEN ───────────────────────────────
-
   if (!session) return (
     <div style={{ minHeight: "100vh", background: d.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Sans Arabic', sans-serif", direction: "rtl", padding: "20px" }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -247,7 +252,6 @@ export default function App() {
         .auth-input:focus{border-color:#c9a84c!important;box-shadow:0 0 0 3px rgba(201,168,76,0.15)}
       `}</style>
 
-      {/* Logo */}
       <div style={{ marginBottom: 28, textAlign: "center", animation: "slideIn .3s ease" }}>
         <div style={{ width: 52, height: 52, borderRadius: 14, background: `linear-gradient(135deg, ${d.navy}, #2d5a8e)`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", boxShadow: `0 0 0 1px #c9a84c33, 0 4px 20px rgba(30,58,95,0.3)` }}>
           <span style={{ font: "800 24px/1 'Outfit'", color: "#c9a84c", letterSpacing: -1 }}>L</span>
@@ -258,10 +262,7 @@ export default function App() {
         <p style={{ color: d.muted, fontSize: 12, marginTop: 4 }}>صياغة المرافعات • الترجمة القانونية</p>
       </div>
 
-      {/* Card */}
       <div style={{ width: "100%", maxWidth: 400, background: d.surface, border: `1px solid ${d.border}`, borderRadius: 16, padding: "28px 24px", boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.4)" : "0 4px 24px rgba(0,0,0,0.06)", animation: "slideIn .35s ease" }}>
-
-        {/* Toggle Login/Signup */}
         <div style={{ display: "flex", background: d.surface2, borderRadius: 10, padding: 3, marginBottom: 22 }}>
           {[{ v: true, l: "تسجيل الدخول" }, { v: false, l: "حساب جديد" }].map(({ v, l }) => (
             <button key={l} onClick={() => { setIsLogin(v); setAuthErr(""); setEmail(""); setPassword(""); }}
@@ -271,7 +272,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* Email */}
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: d.muted, marginBottom: 6 }}>البريد الإلكتروني</label>
           <input type="email" className="auth-input" placeholder="example@domain.com" value={email}
@@ -281,7 +281,6 @@ export default function App() {
           {email && isValidEmail(email) && isDisposableEmail(email) && <p style={{ fontSize: 11, color: "#ef4444", margin: "4px 0 0", textAlign: "right" }}>لا يُسمح باستخدام البريد المؤقت</p>}
         </div>
 
-        {/* Password */}
         <div style={{ marginBottom: !isLogin ? 8 : 16 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: d.muted, marginBottom: 6 }}>كلمة المرور</label>
           <input type="password" className="auth-input" placeholder={isLogin ? "••••••••" : "8 أحرف على الأقل"}
@@ -290,7 +289,6 @@ export default function App() {
             style={{ background: d.surface2, border: `1.5px solid ${d.border}`, color: d.text }} />
         </div>
 
-        {/* Password strength (signup only) */}
         {!isLogin && password && passStrength && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ background: d.surface2, borderRadius: 3, height: 4, overflow: "hidden" }}>
@@ -300,7 +298,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Password requirements (signup only) */}
         {!isLogin && (
           <div style={{ marginBottom: 14, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {[
@@ -315,21 +312,18 @@ export default function App() {
           </div>
         )}
 
-        {/* Error/Success message */}
         {authErr && (
           <div style={{ background: authErr.startsWith("✓") ? (dark ? "rgba(16,185,129,0.1)" : "#ecfdf5") : d.dangerBg, border: `1px solid ${authErr.startsWith("✓") ? "#6ee7b7" : d.danger + "44"}`, borderRadius: 8, padding: "9px 12px", fontSize: 12, color: authErr.startsWith("✓") ? "#059669" : d.danger, marginBottom: 14, textAlign: "right", animation: "slideIn .2s ease" }}>
             {authErr}
           </div>
         )}
 
-        {/* Submit */}
         <button onClick={handleAuth} disabled={loading}
           style={{ width: "100%", padding: 13, background: d.navy, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "opacity .15s" }}>
           {loading && <span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin .7s linear infinite" }} />}
           {loading ? "جارٍ المعالجة..." : isLogin ? "دخول" : "إنشاء الحساب"}
         </button>
 
-        {/* Forgot password (login only) */}
         {isLogin && (
           <p onClick={async () => {
             if (!email || !isValidEmail(email)) { setAuthErr("أدخل بريدك الإلكتروني أولاً"); return; }
@@ -342,7 +336,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Dark mode toggle */}
       <button onClick={() => setDark(!dark)} style={{ marginTop: 16, background: "none", border: `1px solid ${d.border}`, borderRadius: 20, padding: "5px 14px", color: d.muted, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
         {dark ? "☀️ فاتح" : "🌙 داكن"}
       </button>
@@ -431,13 +424,11 @@ export default function App() {
                 style={{ width: "100%", padding: "12px 14px", background: d.surface, border: `1.5px solid ${d.border}`, borderRadius: 10, fontSize: 14, color: d.text, fontFamily: "inherit", lineHeight: 1.8, resize: "vertical", direction: "rtl" }} />
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={handleDraft} disabled={loading || !input.trim()}
-                style={{ flex: 1, padding: "11px 20px", background: d.navy, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: loading || !input.trim() ? "not-allowed" : "pointer", opacity: loading || !input.trim() ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                {loading ? <span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin .7s linear infinite" }} /> : "⚖️"}
-                {loading ? "جارٍ المعالجة..." : "صياغة الوثيقة"}
-              </button>
-            </div>
+            <button onClick={handleDraft} disabled={loading || !input.trim()}
+              style={{ padding: "11px 20px", background: d.navy, color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: loading || !input.trim() ? "not-allowed" : "pointer", opacity: loading || !input.trim() ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {loading ? <span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin .7s linear infinite" }} /> : "⚖️"}
+              {loading ? "جارٍ المعالجة..." : "صياغة الوثيقة"}
+            </button>
           </div>
         )}
 
@@ -485,7 +476,6 @@ export default function App() {
               <p style={{ color: d.muted, fontSize: 14 }}>أسعار تنافسية للمحامين والمكاتب القانونية</p>
             </div>
 
-            {/* Billing Toggle */}
             <div style={{ display: "flex", justifyContent: "center" }}>
               <div style={{ display: "flex", gap: 2, background: d.surface2, borderRadius: 10, padding: 3, maxWidth: 280, width: "100%" }}>
                 {[{ id: "monthly", label: "شهري" }, { id: "annual", label: "سنوي −17%" }].map(b => (
@@ -497,7 +487,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Plan Cards */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(195px, 1fr))", gap: 12 }}>
               {Object.entries(PLANS).map(([pid, p]) => {
                 const cur = plan === pid;
@@ -531,35 +520,29 @@ export default function App() {
               })}
             </div>
 
-            {/* Usage Tracker */}
-            {(() => {
-              const u = (() => { try { const s = localStorage.getItem("litiga_usage"); return s ? JSON.parse(s) : { d: 0, t: 0 }; } catch { return { d: 0, t: 0 }; } })();
-              const lim = PLANS[plan].lim;
-              return (
-                <div style={{ background: d.surface, border: `1px solid ${d.border}`, borderRadius: 12, padding: 16 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: d.muted, marginBottom: 14, textAlign: "right" }}>الاستخدام هذا الشهر</p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    {[
-                      { label: "الصياغات", used: u.d, total: lim.d, color: "#1e3a5f" },
-                      { label: "الترجمات", used: u.t, total: lim.t, color: "#059669" },
-                    ].map(({ label, used, total, color }) => {
-                      const pct = Math.min(100, Math.round((used / total) * 100));
-                      return (
-                        <div key={label} style={{ textAlign: "center" }}>
-                          <div style={{ fontSize: 11, color: d.muted, marginBottom: 4 }}>{label}</div>
-                          <div style={{ font: "800 22px/1 'Outfit'", color }}>
-                            {used}<span style={{ fontSize: 11, color: d.muted }}>/{total}</span>
-                          </div>
-                          <div style={{ background: d.surface2, borderRadius: 3, height: 4, marginTop: 6, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${pct}%`, background: pct >= 90 ? "#ef4444" : color, borderRadius: 3, transition: "width .3s" }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
+            {/* Usage Tracker — من Supabase */}
+            <div style={{ background: d.surface, border: `1px solid ${d.border}`, borderRadius: 12, padding: 16 }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: d.muted, marginBottom: 14, textAlign: "right" }}>الاستخدام هذا الشهر</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {[
+                  { label: "الصياغات", used: usage.drafts_used, total: usage.drafts_limit, color: "#1e3a5f" },
+                  { label: "الترجمات", used: usage.translations_used, total: usage.translations_limit, color: "#059669" },
+                ].map(({ label, used, total, color }) => {
+                  const pct = Math.min(100, Math.round((used / total) * 100));
+                  return (
+                    <div key={label} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: d.muted, marginBottom: 4 }}>{label}</div>
+                      <div style={{ font: "800 22px/1 'Outfit'", color }}>
+                        {used}<span style={{ fontSize: 11, color: d.muted }}>/{total}</span>
+                      </div>
+                      <div style={{ background: d.surface2, borderRadius: 3, height: 4, marginTop: 6, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${pct}%`, background: pct >= 90 ? "#ef4444" : color, borderRadius: 3, transition: "width .3s" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 

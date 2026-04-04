@@ -246,10 +246,33 @@ def check_and_increment(user_id: str, usage_type: str):
     usage_type: 'drafts' أو 'translations'
     يرفع HTTPException 429 إذا تجاوز الحد.
     """
+    import datetime
     plan_data = get_user_plan(user_id)
     usage_data = get_user_usage(user_id)
 
     plan = plan_data.get("plan", "free")
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+
+    # ─── تحقق من انتهاء الاشتراك ───
+    plan_end = plan_data.get("plan_end")
+    if plan_end and plan != "free":
+        plan_end_dt = datetime.datetime.fromisoformat(plan_end.replace("Z", "+00:00"))
+        if now_dt > plan_end_dt:
+            # انتهى الاشتراك — أعد المستخدم للباقة المجانية
+            supabase_admin.table("user_plans").update({
+                "plan": "free",
+                "plan_end": None,
+                "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).eq("user_id", user_id).execute()
+            # صفّر العداد
+            supabase_admin.table("user_usage").update({
+                "drafts_used": 0,
+                "translations_used": 0,
+                "period_start": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).eq("user_id", user_id).execute()
+            plan = "free"
+
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
 
     # التحقق من تصفير الدورة — بعد شهر من تاريخ الاشتراك
@@ -319,6 +342,7 @@ async def get_usage(user=Depends(verify_token)):
     return {
         "plan": plan,
         "plan_start": plan_data.get("plan_start"),
+        "plan_end": plan_data.get("plan_end"),
         "drafts_used": usage_data.get("drafts_used", 0),
         "drafts_limit": limits["drafts"],
         "translations_used": usage_data.get("translations_used", 0),
