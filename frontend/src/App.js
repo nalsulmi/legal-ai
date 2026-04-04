@@ -326,14 +326,6 @@ export default function App() {
     } catch { alert("حدث خطأ أثناء تحميل الملف"); }
   };
 
-  const d = {
-    bg: dark ? "#0d1117" : "#fafafa", surface: dark ? "#161b22" : "#ffffff",
-    surface2: dark ? "#1e2530" : "#f6f8fa", border: dark ? "#30363d" : "#e5e7eb",
-    text: dark ? "#e6edf3" : "#24292f", muted: dark ? "#8b949e" : "#6b7280",
-    gold: "#c9a84c", navy: "#1e3a5f",
-    danger: dark ? "#f87171" : "#dc2626", dangerBg: dark ? "rgba(248,113,113,0.1)" : "#fef2f2",
-  };
-
   return (
     <div style={{ minHeight: "100vh", background: d.bg, fontFamily: "'IBM Plex Sans Arabic', sans-serif", direction: "rtl", color: d.text, display: "flex", flexDirection: "column" }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
