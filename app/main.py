@@ -20,6 +20,7 @@ import json
 import io
 import time
 import logging
+import datetime
 
 logging.basicConfig(level=logging.WARNING)
 load_dotenv()
@@ -246,7 +247,6 @@ def check_and_increment(user_id: str, usage_type: str):
     usage_type: 'drafts' أو 'translations'
     يرفع HTTPException 429 إذا تجاوز الحد.
     """
-    import datetime
     plan_data = get_user_plan(user_id)
     usage_data = get_user_usage(user_id)
 
@@ -258,13 +258,11 @@ def check_and_increment(user_id: str, usage_type: str):
     if plan_end and plan != "free":
         plan_end_dt = datetime.datetime.fromisoformat(plan_end.replace("Z", "+00:00"))
         if now_dt > plan_end_dt:
-            # انتهى الاشتراك — أعد المستخدم للباقة المجانية
             supabase_admin.table("user_plans").update({
                 "plan": "free",
                 "plan_end": None,
                 "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }).eq("user_id", user_id).execute()
-            # صفّر العداد
             supabase_admin.table("user_usage").update({
                 "drafts_used": 0,
                 "translations_used": 0,
@@ -272,16 +270,15 @@ def check_and_increment(user_id: str, usage_type: str):
                 "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }).eq("user_id", user_id).execute()
             plan = "free"
+            usage_data["drafts_used"] = 0
+            usage_data["translations_used"] = 0
 
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
 
-    # التحقق من تصفير الدورة — بعد شهر من تاريخ الاشتراك
+    # ─── تصفير العداد الشهري (للباقات المدفوعة فقط) ───
     period_start = plan_data.get("plan_start")
-    if period_start:
-        import datetime
+    if period_start and plan != "free":
         start_dt = datetime.datetime.fromisoformat(period_start.replace("Z", "+00:00"))
-        now_dt = datetime.datetime.now(datetime.timezone.utc)
-        # حساب بداية الدورة الحالية
         months_passed = (now_dt.year - start_dt.year) * 12 + (now_dt.month - start_dt.month)
         current_period_start = start_dt.replace(
             year=start_dt.year + (start_dt.month + months_passed - 1) // 12,
@@ -290,7 +287,6 @@ def check_and_increment(user_id: str, usage_type: str):
         usage_period_start = datetime.datetime.fromisoformat(
             usage_data.get("period_start", period_start).replace("Z", "+00:00")
         )
-        # لو بدأت دورة جديدة — صفّر العداد
         if current_period_start > usage_period_start:
             supabase_admin.table("user_usage").update({
                 "drafts_used": 0,
@@ -311,10 +307,9 @@ def check_and_increment(user_id: str, usage_type: str):
             detail=f"انتهت حصتك الشهرية في باقة '{plan}' — يرجى الترقية للاستمرار"
         )
 
-    # زيادة العداد
     supabase_admin.table("user_usage").update({
         field: current + 1,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }).eq("user_id", user_id).execute()
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -338,6 +333,27 @@ async def get_usage(user=Depends(verify_token)):
     plan_data = get_user_plan(user_id)
     usage_data = get_user_usage(user_id)
     plan = plan_data.get("plan", "free")
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+
+    # تحقق من انتهاء الاشتراك عند فتح التطبيق
+    plan_end = plan_data.get("plan_end")
+    if plan_end and plan != "free":
+        plan_end_dt = datetime.datetime.fromisoformat(plan_end.replace("Z", "+00:00"))
+        if now_dt > plan_end_dt:
+            supabase_admin.table("user_plans").update({
+                "plan": "free",
+                "plan_end": None,
+                "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).eq("user_id", user_id).execute()
+            supabase_admin.table("user_usage").update({
+                "drafts_used": 0,
+                "translations_used": 0,
+                "period_start": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).eq("user_id", user_id).execute()
+            plan = "free"
+            usage_data = {"drafts_used": 0, "translations_used": 0}
+
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     return {
         "plan": plan,
