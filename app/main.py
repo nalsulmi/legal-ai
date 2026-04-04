@@ -369,6 +369,26 @@ async def get_usage(user=Depends(verify_token)):
 @app.post("/draft")
 async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verify_token)):
     user_id = user.get("sub")
+
+    # ─── تحقق أولاً هل الطلب قانوني — بدون خصم من العداد ───
+    check = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=10,
+        messages=[{
+            "role": "user",
+            "content": f"""هل يصف هذا النص قضية قانونية حقيقية يمكن رفعها أمام المحاكم السعودية؟
+أجب بكلمة واحدة فقط: YES أو NO
+
+النص: {request}"""
+        }]
+    )
+    if check.content[0].text.strip().upper() != "YES":
+        raise HTTPException(
+            status_code=400,
+            detail="يرجى إدخال تفاصيل قضية قانونية واضحة"
+        )
+
+    # ─── الطلب قانوني — خصم من العداد وابدأ الصياغة ───
     check_and_increment(user_id, "drafts")
 
     docs = search_documents(request)
