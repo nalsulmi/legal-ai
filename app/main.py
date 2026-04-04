@@ -11,6 +11,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from jwt.algorithms import ECAlgorithm
 from pydantic import BaseModel
+from supabase import create_client
 import anthropic
 import os
 import jwt as pyjwt
@@ -39,11 +40,20 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
+supabase_admin = create_client(SUPABASE_URL, os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+
 BLOCKED_DOMAINS = {
     "mailinator.com", "guerrillamail.com", "tempmail.com", "throwam.com",
     "sharklasers.com", "trashmail.com", "yopmail.com", "emailondeck.com",
     "10minutemail.com", "fakeinbox.com", "maildrop.cc", "discard.email",
     "emailax.pro", "spamgourmet.com", "dispostable.com"
+}
+
+PLAN_LIMITS = {
+    "free":         {"drafts": 3,   "translations": 5},
+    "individual":   {"drafts": 30,  "translations": 50},
+    "professional": {"drafts": 100, "translations": 200},
+    "team":         {"drafts": 80,  "translations": 150},
 }
 
 DOC_PROMPTS = {
@@ -133,7 +143,6 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
 
     payload = None
 
-    # ─── ES256: Current Key الجديد في Supabase ───
     if alg == "ES256":
         keys = await get_supabase_jwks()
         kid = header.get("kid")
@@ -142,9 +151,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             try:
                 public_key = ECAlgorithm.from_jwk(json.dumps(jwk_key))
                 payload = pyjwt.decode(
-                    token,
-                    public_key,
-                    algorithms=["ES256"],
+                    token, public_key, algorithms=["ES256"],
                     audience="authenticated",
                     options={"require": ["exp", "sub"]}
                 )
@@ -155,9 +162,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 try:
                     public_key = ECAlgorithm.from_jwk(json.dumps(jwk_key))
                     payload = pyjwt.decode(
-                        token,
-                        public_key,
-                        algorithms=["ES256"],
+                        token, public_key, algorithms=["ES256"],
                         options={"require": ["exp", "sub"], "verify_aud": False}
                     )
                     break
@@ -168,16 +173,12 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             except Exception as e:
                 logging.warning(f"JWT verification error: {type(e).__name__}: {e}")
                 continue
-
-    # ─── HS256: Legacy Secret ───
     else:
         if not SUPABASE_JWT_SECRET:
             raise HTTPException(status_code=500, detail="JWT Secret غير مضبوط في المتغيرات البيئية")
         try:
             payload = pyjwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
+                token, SUPABASE_JWT_SECRET, algorithms=["HS256"],
                 audience="authenticated",
                 options={"require": ["exp", "sub"]}
             )
@@ -186,9 +187,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         except pyjwt.InvalidAudienceError:
             try:
                 payload = pyjwt.decode(
-                    token,
-                    SUPABASE_JWT_SECRET,
-                    algorithms=["HS256"],
+                    token, SUPABASE_JWT_SECRET, algorithms=["HS256"],
                     options={"require": ["exp", "sub"], "verify_aud": False}
                 )
             except Exception:
@@ -212,6 +211,92 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     return payload
 
 
+# ─── Usage & Plan Functions ───────────────────────────────────────────────
+
+def get_user_plan(user_id: str) -> dict:
+    """جلب باقة المستخدم — يُنشئ سجل تلقائياً إذا لم يكن موجوداً"""
+    result = supabase_admin.table("user_plans").select("*").eq("user_id", user_id).execute()
+    if result.data:
+        return result.data[0]
+    # إنشاء سجل جديد بالباقة المجانية
+    new_plan = supabase_admin.table("user_plans").insert({
+        "user_id": user_id,
+        "plan": "free",
+    }).execute()
+    return new_plan.data[0]
+
+
+def get_user_usage(user_id: str) -> dict:
+    """جلب استخدام المستخدم — يُنشئ سجل تلقائياً إذا لم يكن موجوداً"""
+    result = supabase_admin.table("user_usage").select("*").eq("user_id", user_id).execute()
+    if result.data:
+        return result.data[0]
+    new_usage = supabase_admin.table("user_usage").insert({
+        "user_id": user_id,
+        "drafts_used": 0,
+        "translations_used": 0,
+        "period_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }).execute()
+    return new_usage.data[0]
+
+
+def check_and_increment(user_id: str, usage_type: str):
+    """
+    يتحقق من الحد ويزيد العداد.
+    usage_type: 'drafts' أو 'translations'
+    يرفع HTTPException 429 إذا تجاوز الحد.
+    """
+    plan_data = get_user_plan(user_id)
+    usage_data = get_user_usage(user_id)
+
+    plan = plan_data.get("plan", "free")
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+
+    # التحقق من تصفير الدورة — بعد شهر من تاريخ الاشتراك
+    period_start = plan_data.get("plan_start")
+    if period_start:
+        import datetime
+        start_dt = datetime.datetime.fromisoformat(period_start.replace("Z", "+00:00"))
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        # حساب بداية الدورة الحالية
+        months_passed = (now_dt.year - start_dt.year) * 12 + (now_dt.month - start_dt.month)
+        current_period_start = start_dt.replace(
+            year=start_dt.year + (start_dt.month + months_passed - 1) // 12,
+            month=(start_dt.month + months_passed - 1) % 12 + 1
+        )
+        usage_period_start = datetime.datetime.fromisoformat(
+            usage_data.get("period_start", period_start).replace("Z", "+00:00")
+        )
+        # لو بدأت دورة جديدة — صفّر العداد
+        if current_period_start > usage_period_start:
+            supabase_admin.table("user_usage").update({
+                "drafts_used": 0,
+                "translations_used": 0,
+                "period_start": current_period_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).eq("user_id", user_id).execute()
+            usage_data["drafts_used"] = 0
+            usage_data["translations_used"] = 0
+
+    field = f"{usage_type}_used"
+    current = usage_data.get(field, 0)
+    limit = limits.get(usage_type, 0)
+
+    if current >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"انتهت حصتك الشهرية في باقة '{plan}' — يرجى الترقية للاستمرار"
+        )
+
+    # زيادة العداد
+    supabase_admin.table("user_usage").update({
+        field: current + 1,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }).eq("user_id", user_id).execute()
+
+# ──────────────────────────────────────────────────────────────────────────
+
+
 @app.get("/")
 def home():
     return {"status": "Litiga API is running!"}
@@ -223,8 +308,29 @@ async def upload_document(title: str, content: str, category: str, user=Depends(
     return result
 
 
+@app.get("/usage")
+async def get_usage(user=Depends(verify_token)):
+    """يُرجع استخدام المستخدم وباقته الحالية"""
+    user_id = user.get("sub")
+    plan_data = get_user_plan(user_id)
+    usage_data = get_user_usage(user_id)
+    plan = plan_data.get("plan", "free")
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    return {
+        "plan": plan,
+        "plan_start": plan_data.get("plan_start"),
+        "drafts_used": usage_data.get("drafts_used", 0),
+        "drafts_limit": limits["drafts"],
+        "translations_used": usage_data.get("translations_used", 0),
+        "translations_limit": limits["translations"],
+    }
+
+
 @app.post("/draft")
 async def draft_clause(request: str, doc_type: str = "claim", user=Depends(verify_token)):
+    user_id = user.get("sub")
+    check_and_increment(user_id, "drafts")
+
     docs = search_documents(request)
     context = "\n\n".join([f"title: {d['title']}\n{d['content']}" for d in docs])
     system_prompt = DOC_PROMPTS.get(doc_type, DOC_PROMPTS["claim"])
@@ -379,6 +485,9 @@ async def export_word(request: WordExportRequest, user=Depends(verify_token)):
 
 @app.post("/translate")
 async def translate_legal(text: str, direction: str = "en_to_ar", user=Depends(verify_token)):
+    user_id = user.get("sub")
+    check_and_increment(user_id, "translations")
+
     docs = search_documents(text)
     terms_context = "\n".join([f"- {d['title']}: {d['content']}" for d in docs])
     if direction == "en_to_ar":
