@@ -25,11 +25,11 @@ def add_document(title: str, content: str, category: str):
     }).execute()
     return {"status": "added", "title": title}
 
-def search_documents(query: str, limit: int = 3):
+def search_documents(query: str, limit: int = 5):
     query_embedding = get_embedding(query)
     result = supabase.rpc("match_documents", {
         "query_embedding": query_embedding,
-        "match_threshold": 0.7,
+        "match_threshold": 0.5,
         "match_count": limit
     }).execute()
     return result.data
