@@ -178,7 +178,7 @@ export default function App() {
       const token = s?.access_token;
       const req = `نوع الوثيقة: ${docLabel}\n\nالتفاصيل:\n${input}`;
       const res = await axios.post(
-        `${API}/draft?request=${encodeURIComponent(req)}`,
+        `${API}/draft?request=${encodeURIComponent(req)}&doc_type=${docType}`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
